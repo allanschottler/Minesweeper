@@ -4,6 +4,7 @@
 #include <ftxui/dom/elements.hpp>
 
 #include <array>
+#include <functional>
 #include <string>
 #include <utility>
 
@@ -20,20 +21,53 @@ struct View {
     static constexpr int TILE_W = 4;
     static constexpr int TILE_H = 2;
 
+    enum class State { Playing, Won, Lost };
+
     Board b;
+    State state = State::Playing;
+    bool finished = false;
 
     std::array<std::array<bool, COLS>, ROWS> clicked{};
+    std::array<std::array<bool, COLS>, ROWS> flagged{};
+    std::array<std::array<std::string, COLS>, ROWS> labels{};
     std::array<std::array<Box, COLS>, ROWS> tile_boxes{};
 
-    int mouse_x = -1;
-    int mouse_y = -1;
     int tile_x = -1;
     int tile_y = -1;
 
     Component renderer;
+    Component menu_button;
+    Component restart_button;
     Component comp;
 
-    explicit View(Board board)
+    void restart() {
+        state = State::Playing;
+        finished = false;
+        clicked = {};
+        flagged = {};
+        labels = {};
+        tile_x = -1;
+        tile_y = -1;
+    }
+
+    static Color label_color(const std::string& label) {
+        if (label.empty())
+            return Color::Default;
+
+        switch (label.front()) {
+            case '1': return Color::RGB(154, 201, 255);
+            case '2': return Color::RGB(168, 230, 207);
+            case '3': return Color::RGB(255, 173, 173);
+            case '4': return Color::RGB(205, 180, 219);
+            case '5': return Color::RGB(255, 199, 153);
+            case '6': return Color::RGB(144, 224, 239);
+            case '7': return Color::RGB(253, 230, 138);
+            case '8': return Color::RGB(255, 198, 211);
+            default: return Color::RGB(255, 128, 128);
+        }
+    }
+
+        explicit View(Board board, std::function<void()> on_menu)
         : b(std::move(board)),
           renderer(Renderer([this] {
         Elements rows;
@@ -42,12 +76,17 @@ struct View {
             Elements row;
 
             for (int x = 0; x < COLS; ++x) {
-                Color bg = clicked[y][x]
+                Color bg = flagged[y][x]
+                    ? Color::RGB(255, 173, 173)
+                    : clicked[y][x]
                     ? Color::RGB(100, 100, 100)
-                    : Color::RGB(200, 200, 200);
+                    : (x+y) % 2 == 0 ? Color::RGB(200, 200, 200) : Color::RGB(210, 210, 210);
 
                 row.push_back(
-                    text("    ")
+                    text(labels[y][x])
+                    | bold
+                    | color(label_color(labels[y][x]))
+                    | center
                     | bgcolor(bg)
                     | size(WIDTH, EQUAL, TILE_W)
                     | size(HEIGHT, EQUAL, TILE_H)
@@ -65,27 +104,51 @@ struct View {
 
             separator(),
 
-            text(
-                "mouse = (" +
-                std::to_string(mouse_x) + ", " +
-                std::to_string(mouse_y) + ")"
-            ),
+            // text(
+            //     "mouse = (" +
+            //     std::to_string(mouse_x) + ", " +
+            //     std::to_string(mouse_y) + ")"
+            // ),
 
-            text(
-                "tile = (" +
-                std::to_string(tile_x) + ", " +
-                std::to_string(tile_y) + ")"
-            ),
+            // text(
+            //     "tile = (" +
+            //     std::to_string(tile_x) + ", " +
+            //     std::to_string(tile_y) + ")"
+            // ),
         });
     })),
-          comp(CatchEvent(renderer, [this](Event event) {
+          menu_button(Button("Main menu", std::move(on_menu))),
+          restart_button(Button("Restart", [this] { restart(); })),
+          comp(CatchEvent(
+              Renderer(
+                  Container::Vertical({
+                      Container::Horizontal({
+                          menu_button,
+                          Maybe(restart_button, &finished),
+                      }),
+                      renderer,
+                  }),
+                  [this] {
+                      const auto status = state == State::Won
+                          ? "You win"
+                          : state == State::Lost ? "You lose" : "";
+
+                      return vbox({
+                          renderer->Render(),
+                          hbox({
+                              menu_button->Render() | size(WIDTH, EQUAL, 13),
+                              finished
+                                  ? restart_button->Render() | size(WIDTH, EQUAL, 11)
+                                  : emptyElement(),
+                              text(status) | vcenter | borderEmpty,
+                          }),
+                      });
+                  }),
+              [this](Event event) {
         if (!event.is_mouse())
             return false;
 
         const Mouse& mouse = event.mouse();
-
-        mouse_x = mouse.x;
-        mouse_y = mouse.y;
 
         tile_x = -1;
         tile_y = -1;
@@ -105,18 +168,54 @@ struct View {
         }
 
         if (tile_x != -1 &&
+            state != State::Playing) {
+            return true;
+        } else if (tile_x != -1 &&
+            mouse.button == Mouse::Right &&
+            mouse.motion == Mouse::Pressed &&
+            !clicked[tile_y][tile_x]) {
+            flagged[tile_y][tile_x] = !flagged[tile_y][tile_x];
+        } else if (tile_x != -1 &&
             mouse.button == Mouse::Left &&
-            mouse.motion == Mouse::Pressed) {
-            clicked[tile_y][tile_x] = true;
+            mouse.motion == Mouse::Pressed &&
+            !flagged[tile_y][tile_x]) {
+            auto picked = pick(b, tile_x, tile_y);
+            if(picked) {
+                for (const auto& [cell, x, y] : picked->picked) {
+                    clicked[y][x] = true;
+                    labels[y][x] = *cell == 0 ? "" : std::to_string(*cell);
+                }
+
+                bool all_safe_cells_revealed = true;
+                for (int y = 0; y < ROWS && all_safe_cells_revealed; ++y) {
+                    for (int x = 0; x < COLS; ++x) {
+                        if (b[y][x] && !clicked[y][x]) {
+                            all_safe_cells_revealed = false;
+                            break;
+                        }
+                    }
+                }
+                if (all_safe_cells_revealed) {
+                    state = State::Won;
+                    finished = true;
+                }
+            } else {
+                for (const auto& [cell, x, y] : picked.error().mines) {
+                    clicked[y][x] = true;
+                    labels[y][x] = cell ? (*cell == 0 ? "" : std::to_string(*cell)) : "X";
+                }
+                state = State::Lost;
+                finished = true;
+            }
         }
 
-        return true;
+        return tile_x != -1;
     })) {}
 };
 
 template<class Board>
-auto make_view(Board board) -> View<Board> {
-    return View<Board>(std::move(board));
+auto make_view(Board board, std::function<void()> on_menu) -> View<Board> {
+    return View<Board>(std::move(board), std::move(on_menu));
 }
 
 }

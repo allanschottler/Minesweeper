@@ -2,8 +2,12 @@
 #include <optional>
 #include <array>
 #include <list>
+#include <queue>
 #include <random>
+#include <tuple>
+#include <expected>
 #include <print>
+#include <utility>
 
 namespace ms {
 
@@ -11,12 +15,12 @@ struct Beginner { static constexpr std::size_t ni = 9, nj = 9, mines = 10; };
 struct Intermediate { static constexpr std::size_t ni = 16, nj = 16, mines = 40; };
 struct Expert { static constexpr std::size_t ni = 30, nj = 16, mines = 99; };
 
-using Pos = std::optional<std::size_t>;
+using Cell = std::optional<std::size_t>;
 
 template<class Difficulty, 
          std::size_t NI = Difficulty::ni, 
          std::size_t NJ = Difficulty::nj>
-struct Board : std::array<std::array<Pos, NI>, NJ> {
+struct Board : std::array<std::array<Cell, NI>, NJ> {
     static constexpr auto ni = NI, nj = NJ;
 };
 
@@ -25,8 +29,8 @@ template<class Difficulty>
     Board<Difficulty> b;
     
     for(auto&& arr : b)
-    for(auto&& pos : arr)
-        pos = 0;
+    for(auto&& cell : arr)
+        cell = 0;
 
     std::list<std::size_t> pool(Difficulty::ni * Difficulty::nj);
     for(auto i(0u); auto& v : pool)
@@ -41,7 +45,7 @@ template<class Difficulty>
         auto pick = distrib(gen);
         auto row = pick / Difficulty::ni;
         auto col = pick % Difficulty::ni;
-        b[col][row] = std::nullopt; //mine
+        b[row][col] = std::nullopt; //mine
         pool.erase(std::next(pool.begin(), pick));
         mines--;
     }
@@ -63,15 +67,57 @@ template<class Difficulty>
     return b;
 }
 
+using PickedCell = std::tuple<Cell, std::size_t, std::size_t>;
+
 template<class Board>
-constexpr void print_board(const Board& b) {
-    for(auto&& arr : b) {
-        for(auto&& pos : arr) {
-            if(pos) std::print("{} ", *pos);
-            else std::print("X ");
-        }
-        std::println();
+std::list<PickedCell> mines(const Board& b) {
+    std::list<PickedCell> picked;
+    for(std::size_t y(0); y<Board::nj; ++y)
+    for(std::size_t x(0); x<Board::ni; ++x) {
+        const auto& cell = b[y][x];
+        if(!cell) picked.emplace_back(cell, x, y);
     }
+    return picked;
+}
+
+struct Ok { std::list<PickedCell> picked; };
+struct Bust { std::list<PickedCell> mines; };
+
+template<class Board>
+std::expected<Ok, Bust> pick(const Board& b, std::size_t i, std::size_t j)
+{
+    std::queue<std::pair<std::size_t, std::size_t>> q;
+    std::list<PickedCell> picked;
+    std::array<std::array<bool, Board::ni>, Board::nj> visited{};
+
+    q.emplace(i, j);
+    visited[j][i] = true;
+
+    while(!q.empty()) {
+        const auto [x, y] = q.front();
+        q.pop();
+
+        const auto& cell = b[y][x];
+        picked.emplace_back(cell, x, y);
+
+        if(!cell) return std::unexpected(Bust{mines(b)});
+        if(*cell != 0) continue;
+
+        for(auto dx(-1); dx <= 1; ++dx)
+        for(auto dy(-1); dy <= 1; ++dy) {
+            if(dx == 0 && dy == 0) continue;
+
+            const auto nx = static_cast<std::size_t>(static_cast<long long>(x) + dx);
+            const auto ny = static_cast<std::size_t>(static_cast<long long>(y) + dy);
+            if(nx >= Board::ni || ny >= Board::nj) continue;
+            if(visited[ny][nx]) continue;
+
+            visited[ny][nx] = true;
+            q.emplace(nx, ny);
+        }
+    }
+
+    return Ok{std::move(picked)};
 }
 
 }
