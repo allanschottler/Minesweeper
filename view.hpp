@@ -4,6 +4,7 @@
 #include <ftxui/dom/elements.hpp>
 
 #include <array>
+#include <chrono>
 #include <functional>
 #include <string>
 #include <utility>
@@ -18,14 +19,17 @@ template<class Board>
 struct View {
     static constexpr int ROWS = Board::nj;
     static constexpr int COLS = Board::ni;
-    static constexpr int TILE_W = 4;
-    static constexpr int TILE_H = 2;
+    static constexpr int TILE_W = 2;
+    static constexpr int TILE_H = 1;
 
     enum class State { Playing, Won, Lost };
 
     Board b;
     State state = State::Playing;
     bool finished = false;
+    bool timer_started = false;
+    std::chrono::steady_clock::time_point timer_start{};
+    std::chrono::seconds frozen_elapsed{};
 
     std::array<std::array<bool, COLS>, ROWS> clicked{};
     std::array<std::array<bool, COLS>, ROWS> flagged{};
@@ -43,11 +47,35 @@ struct View {
     void restart() {
         state = State::Playing;
         finished = false;
+        timer_started = false;
+        frozen_elapsed = {};
         clicked = {};
         flagged = {};
         labels = {};
         tile_x = -1;
         tile_y = -1;
+    }
+
+    std::chrono::seconds elapsed() const {
+        if (finished || !timer_started)
+            return frozen_elapsed;
+
+        return std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - timer_start);
+    }
+
+    std::string timer_text() const {
+        const auto total_seconds = elapsed().count();
+        const auto minutes = total_seconds / 60;
+        const auto seconds = total_seconds % 60;
+        return "Time: " + std::to_string(minutes) + ":" +
+            (seconds < 10 ? "0" : "") + std::to_string(seconds);
+    }
+
+    void finish(State result) {
+        frozen_elapsed = elapsed();
+        state = result;
+        finished = true;
     }
 
     static Color label_color(const std::string& label) {
@@ -141,6 +169,7 @@ struct View {
                                   ? restart_button->Render() | size(WIDTH, EQUAL, 11)
                                   : emptyElement(),
                               text(status) | vcenter | borderEmpty,
+                              text(timer_text()) | vcenter | borderEmpty,
                           }),
                       });
                   }),
@@ -179,6 +208,11 @@ struct View {
             mouse.button == Mouse::Left &&
             mouse.motion == Mouse::Pressed &&
             !flagged[tile_y][tile_x]) {
+            if (!timer_started) {
+                timer_started = true;
+                timer_start = std::chrono::steady_clock::now();
+            }
+
             auto picked = pick(b, tile_x, tile_y);
             if(picked) {
                 for (const auto& [cell, x, y] : picked->picked) {
@@ -196,16 +230,14 @@ struct View {
                     }
                 }
                 if (all_safe_cells_revealed) {
-                    state = State::Won;
-                    finished = true;
+                    finish(State::Won);
                 }
             } else {
                 for (const auto& [cell, x, y] : picked.error().mines) {
                     clicked[y][x] = true;
                     labels[y][x] = cell ? (*cell == 0 ? "" : std::to_string(*cell)) : "X";
                 }
-                state = State::Lost;
-                finished = true;
+                finish(State::Lost);
             }
         }
 
