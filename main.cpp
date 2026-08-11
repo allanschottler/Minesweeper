@@ -39,6 +39,7 @@ int main() {
             [&] {
                 return vbox({
                     text("Minesweeper") | bold,
+                    separator(),
                     beginner_button->Render(),
                     intermediate_button->Render(),
                     expert_button->Render(),
@@ -54,10 +55,19 @@ int main() {
         }
 
         auto play = [&]<class Difficulty>() {
-            auto view = make_view(
-                make_board<Difficulty>(),
-                screen.ExitLoopClosure());
-            screen.Loop(view.comp);
+            bool new_game = true;
+            while (new_game) {
+                new_game = false;
+                auto leave_game = screen.ExitLoopClosure();
+                auto view = make_view(
+                    make_board<Difficulty>(),
+                    leave_game,
+                    [&] {
+                        new_game = true;
+                        leave_game();
+                    });
+                screen.Loop(view.comp);
+            }
         };
 
         switch (choice) {

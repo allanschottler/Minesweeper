@@ -41,6 +41,7 @@ struct View {
 
     Component renderer;
     Component menu_button;
+    Component new_game_button;
     Component restart_button;
     Component comp;
 
@@ -95,7 +96,10 @@ struct View {
         }
     }
 
-        explicit View(Board board, std::function<void()> on_menu)
+        explicit View(
+                Board board,
+                std::function<void()> on_menu,
+                std::function<void()> on_new_game)
         : b(std::move(board)),
           renderer(Renderer([this] {
         Elements rows;
@@ -104,11 +108,18 @@ struct View {
             Elements row;
 
             for (int x = 0; x < COLS; ++x) {
+                const bool alternate = (x + y) % 2 != 0;
                 Color bg = flagged[y][x]
-                    ? Color::RGB(255, 173, 173)
+                    ? (alternate
+                        ? Color::RGB(248, 165, 170)
+                        : Color::RGB(255, 173, 173))
                     : clicked[y][x]
-                    ? Color::RGB(100, 100, 100)
-                    : (x+y) % 2 == 0 ? Color::RGB(200, 200, 200) : Color::RGB(210, 210, 210);
+                    ? (alternate
+                        ? Color::RGB(108, 108, 108)
+                        : Color::RGB(100, 100, 100))
+                    : alternate
+                        ? Color::RGB(210, 210, 210)
+                        : Color::RGB(200, 200, 200);
 
                 row.push_back(
                     text(labels[y][x])
@@ -146,12 +157,14 @@ struct View {
         });
     })),
           menu_button(Button("Main menu", std::move(on_menu))),
+                    new_game_button(Button("New game", std::move(on_new_game))),
           restart_button(Button("Restart", [this] { restart(); })),
           comp(CatchEvent(
               Renderer(
                   Container::Vertical({
                       Container::Horizontal({
                           menu_button,
+                          new_game_button,
                           Maybe(restart_button, &finished),
                       }),
                       renderer,
@@ -165,6 +178,7 @@ struct View {
                           renderer->Render(),
                           hbox({
                               menu_button->Render() | size(WIDTH, EQUAL, 13),
+                              new_game_button->Render() | size(WIDTH, EQUAL, 12),
                               finished
                                   ? restart_button->Render() | size(WIDTH, EQUAL, 11)
                                   : emptyElement(),
@@ -217,6 +231,7 @@ struct View {
             if(picked) {
                 for (const auto& [cell, x, y] : picked->picked) {
                     clicked[y][x] = true;
+                    flagged[y][x] = false;
                     labels[y][x] = *cell == 0 ? "" : std::to_string(*cell);
                 }
 
@@ -246,8 +261,14 @@ struct View {
 };
 
 template<class Board>
-auto make_view(Board board, std::function<void()> on_menu) -> View<Board> {
-    return View<Board>(std::move(board), std::move(on_menu));
+auto make_view(
+    Board board,
+    std::function<void()> on_menu,
+    std::function<void()> on_new_game) -> View<Board> {
+    return View<Board>(
+        std::move(board),
+        std::move(on_menu),
+        std::move(on_new_game));
 }
 
 }
